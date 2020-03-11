@@ -1,0 +1,511 @@
+# Staring with default AWS VPC template 
+# Provision a couple of EC2 Instances
+# Implement NGinx reverse proxy
+# Within a VPC
+# Subnet appropriotly for security
+# Using Intrinsic Functions to pass resource references after provisioning 
+
+Description:
+  This template deploys a VPC, with a pair of public and private subnets spread
+  across two Availability Zones. It deploys an Internet Gateway, with a default
+  route on the public subnets. It deploys a pair of NAT Gateways (one in each AZ),
+  and default routes for them in the private subnets.
+
+# VPC Config  
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+    Default: Nginx stack
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnetDMZACIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.0.0/24
+
+  PublicSubnetDMZBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateSubnetAppACIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.3.0/24
+
+  PrivateSubnetAppBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.4.0/24
+
+  PrivateSubnetDataACIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.6.0/24
+
+  PrivateSubnetDataBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.7.0/24
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnetDMZA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetDMZACIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ1) DMZA
+
+  PublicSubnetDMZB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetDMZBCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ2) DMZB
+
+  PrivateSubnetAppA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnetAppACIDR
+
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1) AppA
+
+  PrivateSubnetAppB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnetAppBCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ2) AppB
+
+  PrivateSubnetDataA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnetDataACIDR
+
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1) DataA
+
+  PrivateSubnetDataB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnetDataBCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ2) DataB
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnetDMZA
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnetDMZB
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Routes
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetDMZARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetDMZA
+
+  PublicSubnetDMZBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetDMZB
+
+  PrivateRouteTableAppA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  DefaultPrivateRouteAppA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAppA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnetAppARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAppA
+      SubnetId: !Ref PrivateSubnetAppA
+
+  PrivateRouteTableAppB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  DefaultPrivateRouteAppB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAppB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnetAppBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAppB
+      SubnetId: !Ref PrivateSubnetAppB
+
+  PrivateRouteTableDataA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  DefaultPrivateRouteDataA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableDataA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnetDataARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableDataA
+      SubnetId: !Ref PrivateSubnetDataA
+
+  PrivateRouteTableDataB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  DefaultPrivateRouteDataB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableDataB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnetDataBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableDataB
+      SubnetId: !Ref PrivateSubnetDataB
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref VPC
+
+# ELB 1 - Security Group
+  NGXELBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "NGX-ELB-SG"
+      GroupDescription: "Security group for Nginx ELB"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+# ELB 2 - Security Group          
+  NGXELBINTSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "NGX-ELB-INT-SG"
+      GroupDescription: "Security group for Nginx internal ELB"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+# EC2 Instance 1 - Security Group
+  NGXSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "NGX-SG"
+      GroupDescription: "Security group for Nginx"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref NGXELBSG
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref NGXELBINTSG
+
+# Postgress - Security Group
+  PGSQLRDSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "PGSQL-RDS-SG"
+      GroupDescription: "Security group for PostgreSQL database"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref NGXSG
+
+# Postgress Subnet
+  PGSQLRDSSubnet:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: Postgresql subnet
+      DBSubnetGroupName: PGSQL-RDS-Subnet
+      SubnetIds: 
+        - !Ref PrivateSubnetDataA
+        - !Ref PrivateSubnetDataB
+  
+  # Postgress RDS Instance
+  PGSQLRDS:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      AllocatedStorage: 20
+      DBInstanceClass: db.t2.micro
+      DBInstanceIdentifier: PGSQL-RDS
+      DBName: nginxdb
+      DBSubnetGroupName: !Ref PGSQLRDSSubnet
+      Engine: postgres
+      EngineVersion: 10.9
+      MasterUsername: postgres
+      MasterUserPassword: somepasswordhere
+      MultiAZ: true
+      VPCSecurityGroups: 
+        - !Ref PGSQLRDSSG
+
+# ELB 1 - Instance
+  NGXELB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      ConnectionSettings: 
+        IdleTimeout: 3600
+      CrossZone: true
+      HealthCheck: 
+        Target: HTTP:80/
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+      Instances: 
+       - !Ref NginXNODE1
+       - !Ref NginXNODE2
+      Listeners: 
+        - InstancePort: 80
+          LoadBalancerPort: 443
+          Protocol: HTTPS
+
+          # Self Signed SSL Cert - Uploaded to IAM
+          SSLCertificateId: arn:aws:iam::531031323532:server-certificate/test.com
+      LoadBalancerName: NGINX-ELB
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref NGXELBSG
+      Subnets: 
+        - !Ref PublicSubnetDMZA
+        - !Ref PublicSubnetDMZB
+
+  # ELB 2 - Instance
+  NGXELBINT:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties: 
+      ConnectionSettings: 
+        IdleTimeout: 3600
+      CrossZone: true
+      HealthCheck: 
+        Target: HTTP:80/
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+      Instances: 
+        - !Ref NginXNODE1
+        - !Ref NginXNODE2
+      Listeners: 
+        - InstancePort: 80
+          LoadBalancerPort: 443
+          Protocol: HTTPS
+          
+          # Uploaded to IAM 
+          SSLCertificateId: arn:aws:iam::531031323532:server-certificate/test.com
+      LoadBalancerName: NGINX-ELB-INT
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref NGXELBINTSG
+      Subnets: 
+        - !Ref PrivateSubnetAppA
+        - !Ref PrivateSubnetAppB
+
+# EC2 Node 1 - Instance
+  NginXNODE1:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: ami-0edcec072887c2caa
+      InstanceType: t2.micro
+      KeyName: test
+      SecurityGroupIds: 
+        - !Ref NGXSG
+      SubnetId: !Ref PrivateSubnetAppA
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          apt-get update
+          apt-get install -y nginx
+          systemctl enable nginx
+          systemctl start nginx
+
+# EC2 Node 2 - Instance
+  NginXNODE2:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: ami-0edcec072887c2caa
+      InstanceType: t2.micro
+      KeyName: test
+      SecurityGroupIds: 
+        - !Ref NGXSG
+      SubnetId: !Ref PrivateSubnetAppB
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          apt-get update
+          apt-get install -y nginx
+          systemctl enable nginx
+          systemctl start nginx
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+
+  PublicSubnets:
+    Description: A list of the public subnets
+    Value: !Join [ ",", [ !Ref PublicSubnetDMZA, !Ref PublicSubnetDMZB ]]
+
+  PrivateSubnets:
+    Description: A list of the private subnets
+    Value: !Join [ ",", [ !Ref PrivateSubnetAppA, !Ref PrivateSubnetAppB, !Ref PrivateSubnetDataA, !Ref PrivateSubnetDataB ]]
+
+  PublicSubnetDMZA:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnetDMZA
+
+  PublicSubnetDMZB:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnetDMZB
+
+  PrivateSubnetAppA:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnetAppA
+
+  PrivateSubnetAppB:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnetAppB
+
+  PrivateSubnetDataA:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnetDataA
+
+  PrivateSubnetDataB:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnetDataB
+
+  NoIngressSecurityGroup:
+    Description: Security group with no ingress rule
+    Value: !Ref NoIngressSecurityGroup
